@@ -1,0 +1,108 @@
+#!/usr/bin/env python
+
+
+import optparse as op
+import os
+
+
+__USAGE__ = "%prog OPTIONS FILE1 [FILE2 ...]"
+
+
+def load_bed_file(fname):
+    ret = []
+    with open(fname) as handle:
+        for line in handle:
+            bits = line.strip().split("\t")
+            if len(bits) != 5:
+                raise ValueError("Invalid BED file: %s" % line.strip())
+            start = int(bits[1])
+            end = int(bits[2])
+            if start > end:
+                print bits[3]
+            start, end = min(start, end), max(start, end)
+            ret.append([(bits[0], start, end), bits[3], bits[4]])
+    ret.sort()
+    return ret
+
+
+def overlap(opts, a, b):
+    a1, a2 = a[1] - opts.overlap_distance, a[2] + opts.overlap_distance
+    b1, b2 = b[1] - opts.overlap_distance, b[2] + opts.overlap_distance
+    if a[0] != b[0]:
+        return False
+    elif a1 <= b1 and a2 >= b1:
+        return True
+    elif a1 <= b2 and a2 >= b2:
+        return True
+    elif a1 >= b1 and a2 <= b2:
+        return True
+    else:
+        return False
+
+
+def merge_one(opts, data):
+    min_pos = ("chrZ", 0, 0)
+    for k, v in data.items():
+        if not len(v):
+            continue
+        if v[0][0] < min_pos:
+            min_pos = v[0][0]
+    group = {}
+    found = True
+    while found:
+        found = False
+        for k, v in data.items():
+            if not len(v):
+                continue
+            if overlap(opts, min_pos, v[0][0]):
+                found = True
+                start = min(min_pos[1], v[0][0][1])
+                end = max(min_pos[2], v[0][0][2])
+                min_pos = (min_pos[0], start, end)
+                val = v.pop(0)
+                val = "%s:%s" % (val[1], val[2])
+                if k in group:
+                    group[k].append(val)
+                else:
+                    group[k] = [val]
+    count = 0
+    ret = []
+    for k, v in group.items():
+        count += len(v)
+        ret.append("%s %s" % (k, "; ".join(v)))
+    return min_pos, len(group), count, ret
+
+
+def merge(opts, data):
+    while any(len(v) for v in data.values()):
+        group = merge_one(opts, data)
+        ((chr_id, start, end), gcount, scount, info) = group
+        row = [chr_id, start, end, gcount, scount] + info
+        print "\t".join(map(str, row))
+
+
+def options():
+    return [
+        op.make_option("-o", "--overlap-distance", default=50,
+            help="Fudge factor for overlap calculations")
+    ]
+
+
+def main():
+    parser = op.OptionParser(usage=__USAGE__, option_list=options())
+    opts, args = parser.parse_args()
+
+    if not len(args):
+        parser.error("You must specify a list of BED files")
+
+    data = {}
+    for fname in args:
+        if not os.path.isfile(fname):
+            parser.error("Unable to find file: %s" % fname)
+        data[os.path.basename(fname)] = load_bed_file(fname)
+
+    merge(opts, data)
+
+
+if __name__ == '__main__':
+    main()

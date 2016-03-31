@@ -1,0 +1,156 @@
+#!/usr/bin/env python
+
+
+import optparse as op
+import os
+import re
+import sys
+
+
+__USAGE__ = "%prog GENES GROUPS"
+
+
+def load_genes(fname):
+    ret = {}
+    with open(fname) as handle:
+        for line in handle:
+            bits = line.strip().split("\t")
+            assert len(bits) == 5
+            chr_id = bits[0]
+            start = int(bits[1])
+            end = int(bits[2])
+            midpoint = start + (end - start) / 2
+            gene = bits[3]
+            desc = bits[4]
+            ret.setdefault(chr_id, [])
+            ret[chr_id].append((midpoint, start, end, bits[3], bits[4]))
+    for chr_id in ret:
+        ret[chr_id].sort()
+    return ret
+
+
+def load_groups(fname):
+    ret = {}
+    with open(fname) as handle:
+        for line in handle:
+            bits = line.strip().split("\t")
+            assert len(bits) >= 6
+            chr_id = bits[0]
+            start = int(bits[1])
+            end = int(bits[2])
+            midpoint = start + (end - start) / 2
+            row = (midpoint, start, end, bits[3], bits[4], bits[5:])
+            ret.setdefault(chr_id, [])
+            ret[chr_id].append(row)
+    for chr_id in ret:
+        ret[chr_id].sort()
+    return ret
+
+
+def get_group_names(groups):
+    group_names = set()
+    for v in groups.values():
+        for row in v:
+            for member in row[5]:
+                name = member.split()[0]
+                group_names.add(name)
+    return list(sorted(group_names))
+
+
+def join(chr_id, genes, groups):
+    curr_gene = genes.pop(0)
+    next_gene = genes[0]
+    while len(groups):
+        group = groups.pop(0)
+        while group[0] > next_gene[0] and len(genes) > 1:
+            curr_gene = genes.pop(0)
+            next_gene = genes[0]
+        # Hit on strand before first gene
+        if group[0] < curr_gene:
+            yield (chr_id, curr_gene, group)
+            continue
+        # Hit on strand after last gene
+        if group[0] >= next_gene[0]:
+            yield (chr_id, next_gene, group)
+            continue
+        # Use closer
+        d1 = group[1] - curr_gene[2]
+        d2 = next_gene[1] - group[2]
+        if d1 < d2:
+            yield (chr_id, curr_gene, group)
+        else:
+            yield (chr_id, next_gene, group)
+
+
+def print_header(group_names):
+    cols = [
+        "chr",
+        "gene_start",
+        "gene_end",
+        "group_start",
+        "group_end",
+        "file_count",
+        "sample_count",
+        "gene_name"
+    ]
+    cols += group_names
+    cols += [
+        "gene_desc"
+    ]
+    print "\t".join(cols)
+
+
+def print_row(group_names, row):
+    (chr_id, gene, group) = row
+    (_, gstart, gend, gname, gdesc) = gene
+    (_, bstart, bend, fcount, scount, entries) = group
+    cols = [
+        chr_id,
+        gstart,
+        gend,
+        bstart,
+        bend,
+        fcount,
+        scount,
+        gname
+    ]
+    names = [n.split()[0] for n in entries]
+    for gn in group_names:
+        if gn in names:
+            cols.append("X")
+        else:
+            cols.append(" ")
+    cols.append(gdesc)
+    cols.extend(entries)
+    print "\t".join(map(str, cols))
+
+
+def options():
+    return []
+
+
+def main():
+    parser = op.OptionParser(usage=__USAGE__, option_list=options())
+    opts, args = parser.parse_args()
+
+    if len(args) != 2:
+        parser.error("Two file names expected.")
+
+    for fname in args:
+        if not os.path.isfile(fname):
+            parser.error("Unknown file: %s" % fname)
+
+    genes = load_genes(args[0])
+    groups = load_groups(args[1])
+
+    group_names = get_group_names(groups)
+
+    print_header(group_names)
+
+    for k in sorted(genes.keys()):
+        for row in join(k, genes[k], groups[k]):
+            print_row(group_names, row)
+
+
+if __name__ == '__main__':
+    main()

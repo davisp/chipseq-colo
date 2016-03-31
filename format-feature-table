@@ -1,0 +1,137 @@
+#!/usr/bin/env python
+
+
+import optparse as op
+import os
+import re
+import sys
+
+
+__USAGE__ = "%prog TABLE"
+
+CHR_IDS = {} # Populated below for cleanliness
+
+ACC_RE = re.compile("ref\|([^|]+)\|")
+
+KEY_ORDER = [
+    'gene_syn',
+    'db_xref',
+    'gene_desc',
+    'exception',
+    'pseudo',
+    'note',
+]
+
+
+def parse_features(handle):
+    curr_chr = None
+    curr_feature = None
+    for line in handle:
+        if not line.strip():
+            continue
+        if line.startswith(">"):
+            if curr_feature is not None:
+                assert curr_chr is not None
+                yield (curr_chr, curr_feature)
+            match = ACC_RE.search(line)
+            curr_chr = CHR_IDS[match.group(1)]
+            continue
+        assert curr_chr is not None
+        bits = line.rstrip().split("\t")
+        if len(bits) == 3 and bits[0] and bits[1] and bits[2]:
+            if curr_feature is not None:
+                yield (curr_chr, curr_feature)
+            curr_feature = [bits]
+        else:
+            curr_feature.append(bits)
+    if curr_feature is not None:
+        assert curr_chr is not None
+        yield (curr_chr, curr_feature)
+
+
+def parse_genes(handle):
+    for (chr_id, feature) in parse_features(handle):
+        assert len(feature[0]) == 3
+        if feature[0][2] != "gene":
+            continue
+        start = int(feature[0][0].lstrip("<>"))
+        end = int(feature[0][1].lstrip("<>"))
+        coords = (min(start, end), max(start, end))
+        params = {}
+        for info in feature[1:]:
+            assert len(info) >= 4
+            if len(info) == 4:
+                info.append("true")
+            k, v = info[3], info[4]
+            if k in params:
+                params[k].append(v)
+            else:
+                params[k] = [v]
+        for k, v in params.items():
+            params[k] = ", ".join(v)
+        yield (chr_id, coords, params)
+
+
+def print_gene(gene):
+    (chr_id, coords, params) = gene
+    gene = params.pop("gene")
+    desc = []
+    for k in KEY_ORDER:
+        if k not in params:
+            continue
+        desc.append("%s: %s" % (k, params[k]))
+    desc = "; ".join(desc)
+    print "\t".join(map(str, [chr_id, coords[0], coords[1], gene, desc]))
+
+
+def options():
+    return []
+
+
+def main():
+    parser = op.OptionParser(usage=__USAGE__, option_list=options())
+    opts, args = parser.parse_args()
+
+    if not len(args):
+        parser.error("No feature table file specified.")
+    if len(args) > 1:
+        parser.error("Unknown arguments: %s" % ", ".join(args))
+
+    if not os.path.isfile(args[0]):
+        parser.error("Unknown file: %s" % args[0])
+
+    with open(args[0]) as handle:
+        for gene in parse_genes(handle):
+            print_gene(gene)
+
+
+CHR_IDS = {
+    "NC_000001.11": "chr1",
+    "NC_000002.12": "chr2",
+    "NC_000003.12": "chr3",
+    "NC_000004.12": "chr4",
+    "NC_000005.10": "chr5",
+    "NC_000006.12": "chr6",
+    "NC_000007.14": "chr7",
+    "NC_000008.11": "chr8",
+    "NC_000009.12": "chr9",
+    "NC_000010.11": "chr10",
+    "NC_000011.10": "chr11",
+    "NC_000012.12": "chr12",
+    "NC_000013.11": "chr13",
+    "NC_000014.9": "chr14",
+    "NC_000015.10": "chr15",
+    "NC_000016.10": "chr16",
+    "NC_000017.11": "chr17",
+    "NC_000018.10": "chr18",
+    "NC_000019.10": "chr19",
+    "NC_000020.11": "chr20",
+    "NC_000021.9": "chr21",
+    "NC_000022.11": "chr22",
+    "NC_000023.11": "chrX",
+    "NC_000024.10": "chrY"
+}
+
+
+if __name__ == '__main__':
+    main()
